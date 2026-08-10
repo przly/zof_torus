@@ -491,10 +491,10 @@
   // same length, so it always stays exactly ORBIT_RADIUS away from the
   // pivot -- rotating the pivot swings the torus along that fixed-radius
   // arc (and spins the torus itself along with it) instead of translating it
-  const ORBIT_RADIUS = IS_MOBILE ? 0.25 : 2;
+  const ORBIT_RADIUS = IS_MOBILE ? 0.4 : 0.1;
   const PIVOT = [0, 0, -ORBIT_RADIUS];
 
-  const MAX_YAW = IS_MOBILE ? 0.9 : 0.24; // radians, left/right swing limit (cursor X)
+  const MAX_YAW = IS_MOBILE ? 0.9 : 0.9; // radians, left/right swing limit (cursor X)
   const MAX_PITCH = 0.3; // radians, up/down swing limit (cursor Y)
   const SPRING_STIFFNESS = 0.002; // how strongly it's pulled toward the cursor
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
@@ -505,7 +505,7 @@
   // right (or left) than the arc alone would carry it. Scales with viewport
   // width (recalculated in resize()) so it's proportionally smaller on
   // narrow screens instead of a fixed world-unit amount everywhere
-  const EXTRA_X_RANGE_BASE = 0.5; // world units, at EXTRA_X_REFERENCE_WIDTH
+  const EXTRA_X_RANGE_BASE = 0; // world units, at EXTRA_X_REFERENCE_WIDTH
   const EXTRA_X_REFERENCE_WIDTH = 1440; // px -- the width EXTRA_X_RANGE_BASE was tuned at
   let extraXRange = EXTRA_X_RANGE_BASE;
   let targetExtraX = 0, curExtraX = 0, velExtraX = 0;
