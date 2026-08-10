@@ -292,7 +292,11 @@
     }
   `;
 
-  const POST_FRAG_SRC = LOW_POWER ? POST_FRAG_SRC_LOW : POST_FRAG_SRC_HIGH;
+  // phones always get the full 9-tap blur (better quality) even when
+  // LOW_POWER is true from the coarse-pointer check -- only non-touch
+  // low-core-count devices (e.g. an old laptop) fall back to the cheap
+  // 5-tap version
+  const POST_FRAG_SRC = (LOW_POWER && !IS_MOBILE) ? POST_FRAG_SRC_LOW : POST_FRAG_SRC_HIGH;
 
   function compileShader(type, src) {
     const shader = gl.createShader(type);
@@ -516,8 +520,11 @@
 
   function resize() {
     // capping the backing-store resolution is the single biggest lever here:
-    // the blur/grain passes cost scales directly with total pixel count
-    const dpr = Math.min(window.devicePixelRatio || 1, LOW_POWER ? 1 : 2);
+    // the blur/grain passes cost scales directly with total pixel count.
+    // phones keep full DPR (like the blur shader tier above) -- capping to 1
+    // on a high-density phone screen means the canvas gets upscaled after
+    // rendering, which reads as blocky/soft regardless of blur quality
+    const dpr = Math.min(window.devicePixelRatio || 1, (LOW_POWER && !IS_MOBILE) ? 1 : 2);
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
