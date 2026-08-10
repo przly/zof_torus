@@ -120,14 +120,14 @@
       vec3 p = vObjPos * 1.05;
 
       // primary noise field: shapes the overall blob layout.
-      // uTime * 0.035 is its animation speed (the lava-lamp drift) --
+      // uTime * 0.16 is its animation speed (the lava-lamp drift) --
       // lower this to make blobs (including pink peaks) morph more slowly
       // and linger longer, raise it to speed the whole texture up
-      float n1 = snoise(p + vec3(0.0, 0.0, uTime * 0.035));
+      float n1 = snoise(p + vec3(0.0, 0.0, uTime * 0.16));
 
       // secondary noise field: adds finer detail on top of n1.
-      // its own frequency (1.3) and speed (-0.028) can differ from n1's
-      float n2 = snoise(p * 1.3 + vec3(5.2, 1.3, -uTime * 0.028));
+      // its own frequency (1.3) and speed (-0.128) can differ from n1's
+      float n2 = snoise(p * 1.3 + vec3(5.2, 1.3, -uTime * 0.128));
 
       // blend weight between the two fields -- raise n2's share (currently
       // 0.15) for a busier/noisier look, lower it for a smoother/more
@@ -144,8 +144,11 @@
       vec3 pink = vec3(0.95, 0.35, 0.82);
 
       // cyanBase -> cyanBright transition. smoothstep(start, end, t):
-      // lower "start" makes the brightening begin earlier/cover more area
-      vec3 color = mix(cyanBase, cyanBright, smoothstep(0.30, 0.65, t));
+      // this band sits right up against the pink threshold below (0.68) so
+      // the bright highlight only shows leading into a peak, not spread
+      // across most of the surface. widening the gap (currently 0.40-0.68)
+      // makes that falloff bigger/softer; narrowing it makes it a sharper edge
+      vec3 color = mix(cyanBase, cyanBright, smoothstep(0.40, 0.68, t));
 
       // cyanBright -> pink transition (the peaks). raising "start" makes
       // peaks rarer (only the highest noise values reach pink); widening
@@ -356,7 +359,7 @@
     };
   }
 
-  const geo = LOW_POWER ? createTorus(0.68, 0.32, 40, 20) : createTorus(0.68, 0.32, 64, 32);
+  const geo = LOW_POWER ? createTorus(0.68, 0.24, 40, 20) : createTorus(0.68, 0.24, 64, 32);
 
   const posBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
@@ -506,10 +509,14 @@
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     objectScale = BASE_SCALE * (rect.width < 700 ? 0.6 : 1);
 
-    destroyFBO(fboScene);
-    destroyFBO(fboBlur);
-    fboScene = createFBO(canvas.width, canvas.height, true);
-    fboBlur = createFBO(canvas.width, canvas.height, false);
+    // mobile skips the blur/grain post-process pipeline entirely (renders
+    // straight to the screen below), so there's no need to allocate these
+    if (!IS_MOBILE) {
+      destroyFBO(fboScene);
+      destroyFBO(fboBlur);
+      fboScene = createFBO(canvas.width, canvas.height, true);
+      fboBlur = createFBO(canvas.width, canvas.height, false);
+    }
   }
   window.addEventListener('resize', resize, { passive: true });
   resize();
@@ -537,9 +544,11 @@
     const projMatrix = perspective(Math.PI / 5.5, aspect, 0.1, 10);
     const elapsed = reducedMotion ? 0 : (performance.now() - startTime) / 1000;
 
-    // pass 1: render torus scene into an offscreen texture
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fboScene.framebuffer);
-    gl.viewport(0, 0, fboScene.width, fboScene.height);
+    // pass 1: render torus scene. Mobile skips post-processing entirely, so
+    // it draws straight to the screen instead of an offscreen texture --
+    // saves both extra full-resolution passes, not just their visual effect
+    gl.bindFramebuffer(gl.FRAMEBUFFER, IS_MOBILE ? null : fboScene.framebuffer);
+    gl.viewport(0, 0, IS_MOBILE ? canvas.width : fboScene.width, IS_MOBILE ? canvas.height : fboScene.height);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(sceneProgram);
 
@@ -557,6 +566,11 @@
     gl.uniform1f(uSceneTime, elapsed);
 
     gl.drawElements(gl.TRIANGLES, geo.indices.length, gl.UNSIGNED_SHORT, 0);
+
+    if (IS_MOBILE) {
+      rafId = requestAnimationFrame(render);
+      return;
+    }
 
     // pass 2 + 3: separable blur (horizontal then vertical), grain added on the final pass
     gl.disable(gl.DEPTH_TEST);
@@ -580,7 +594,7 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.bindTexture(gl.TEXTURE_2D, fboBlur.texture);
     gl.uniform2f(uDirection, 0, 1);
-    gl.uniform1f(uGrainAmount, IS_MOBILE ? 0 : GRAIN_AMOUNT);
+    gl.uniform1f(uGrainAmount, GRAIN_AMOUNT);
     gl.uniform1f(uGrainScale, GRAIN_SCALE);
     gl.uniform1f(uPostTime, elapsed);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
