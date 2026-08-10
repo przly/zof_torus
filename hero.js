@@ -495,7 +495,7 @@
   const PIVOT = [0, 0, -ORBIT_RADIUS];
 
   const MAX_YAW = IS_MOBILE ? 0.9 : 0.9; // radians, left/right swing limit (cursor X)
-  const MAX_PITCH = 0.6; // radians, up/down swing limit (cursor Y)
+  const MAX_PITCH = IS_MOBILE ? 0.9 : 0.6; // radians, up/down swing limit (cursor Y)
   const SPRING_STIFFNESS = 0.002; // how strongly it's pulled toward the cursor
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
   let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0, velYaw = 0, velPitch = 0;
