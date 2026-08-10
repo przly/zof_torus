@@ -63,23 +63,6 @@ step, no dependencies — three plain files.
   load — this matters on mobile, where the canvas can otherwise briefly
   measure a zero/incorrect size before layout settles.
 
-## Customization
-
-Everything tunable lives in named constants near the top of each section
-in `hero.js`:
-
-| Constant | Effect |
-|---|---|
-| `BG_COLOR` | WebGL clear color — must match `.hero`'s CSS background |
-| `BLUR_SPREAD`, `GRAIN_AMOUNT`, `GRAIN_SCALE` | Post-process blur/film-grain intensity |
-| `cyanBase` / `cyanBright` / `pink` (in `SCENE_FRAG_SRC`) | The torus surface's color ramp |
-| `ORBIT_RADIUS`, `MAX_YAW`, `MAX_PITCH` | Size/angle limits of the pointer-tracking swing |
-| `SPRING_STIFFNESS`, `SPRING_DAMPING` | How snappy vs. floaty the swing feels |
-| `BASE_SCALE` | Overall torus size |
-
-Most of these already have separate `IS_MOBILE ? ... : ...` values tuned
-per device tier — check both branches when adjusting.
-
 ## Testing checklist before shipping a change
 
 - Desktop: mouse parallax tracks smoothly, no jank on resize.
