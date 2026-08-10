@@ -10,6 +10,10 @@
   const LOW_POWER = (navigator.hardwareConcurrency || 4) <= 4
     || window.matchMedia('(pointer: coarse)').matches;
 
+  // touch/coarse-pointer devices are treated as "mobile" -- grain is
+  // dropped entirely on these regardless of core count
+  const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
+
   const gl = canvas.getContext('webgl', { antialias: !LOW_POWER, alpha: false })
     || canvas.getContext('experimental-webgl', { antialias: !LOW_POWER, alpha: false });
   if (!gl) return;
@@ -576,7 +580,7 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.bindTexture(gl.TEXTURE_2D, fboBlur.texture);
     gl.uniform2f(uDirection, 0, 1);
-    gl.uniform1f(uGrainAmount, GRAIN_AMOUNT);
+    gl.uniform1f(uGrainAmount, IS_MOBILE ? 0 : GRAIN_AMOUNT);
     gl.uniform1f(uGrainScale, GRAIN_SCALE);
     gl.uniform1f(uPostTime, elapsed);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
