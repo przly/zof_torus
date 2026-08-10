@@ -491,10 +491,10 @@
   // same length, so it always stays exactly ORBIT_RADIUS away from the
   // pivot -- rotating the pivot swings the torus along that fixed-radius
   // arc (and spins the torus itself along with it) instead of translating it
-  const ORBIT_RADIUS = 2;
+  const ORBIT_RADIUS = IS_MOBILE ? 0.25 : 2;
   const PIVOT = [0, 0, -ORBIT_RADIUS];
 
-  const MAX_YAW = 0.24; // radians, left/right swing limit (cursor X)
+  const MAX_YAW = IS_MOBILE ? 0.9 : 0.24; // radians, left/right swing limit (cursor X)
   const MAX_PITCH = 0.3; // radians, up/down swing limit (cursor Y)
   const SPRING_STIFFNESS = 0.002; // how strongly it's pulled toward the cursor
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
@@ -510,12 +510,20 @@
   let extraXRange = EXTRA_X_RANGE_BASE;
   let targetExtraX = 0, curExtraX = 0, velExtraX = 0;
 
+  // same idea on the vertical axis, but mobile-only -- desktop's swing arc
+  // already covers Y sufficiently, and mobile has extraXRange zeroed out
+  // above in favor of this instead
+  const EXTRA_Y_RANGE_MOBILE = 0.3; // world units
+  let extraYRange = IS_MOBILE ? EXTRA_Y_RANGE_MOBILE : 0;
+  let targetExtraY = 0, curExtraY = 0, velExtraY = 0;
+
   function setTargetFromPoint(clientX, clientY) {
     const nx = (clientX / window.innerWidth) - 0.5;
     const ny = (clientY / window.innerHeight) - 0.5;
     targetYaw = nx * MAX_YAW * 2;
     targetPitch = ny * MAX_PITCH * 2;
     targetExtraX = nx * extraXRange * 2;
+    targetExtraY = -ny * extraYRange * 2;
   }
 
   function onPointerMove(e) {
@@ -550,7 +558,7 @@
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     objectScale = BASE_SCALE * (rect.width < 700 ? 0.6 : 1);
-    extraXRange = EXTRA_X_RANGE_BASE * (rect.width / EXTRA_X_REFERENCE_WIDTH);
+    extraXRange = IS_MOBILE ? 0 : EXTRA_X_RANGE_BASE * (rect.width / EXTRA_X_REFERENCE_WIDTH);
 
     destroyFBO(fboScene);
     destroyFBO(fboBlur);
@@ -569,9 +577,11 @@
     velYaw = (velYaw + (targetYaw - curYaw) * SPRING_STIFFNESS) * SPRING_DAMPING;
     velPitch = (velPitch + (targetPitch - curPitch) * SPRING_STIFFNESS) * SPRING_DAMPING;
     velExtraX = (velExtraX + (targetExtraX - curExtraX) * SPRING_STIFFNESS) * SPRING_DAMPING;
+    velExtraY = (velExtraY + (targetExtraY - curExtraY) * SPRING_STIFFNESS) * SPRING_DAMPING;
     curYaw += velYaw;
     curPitch += velPitch;
     curExtraX += velExtraX;
+    curExtraY += velExtraY;
 
     // rotate the pivot by (curYaw, curPitch) and place the torus at the
     // fixed-radius local offset (0, 0, ORBIT_RADIUS) that rotation carries
@@ -592,10 +602,11 @@
     modelMatrix[15] = 1;
 
     // world position = pivot + R * (0, 0, ORBIT_RADIUS) = pivot + col2 * ORBIT_RADIUS.
-    // curExtraX is added on top of X only -- Y stays exactly what the orbit
-    // rotation gives it, X gets an additional independent pull
+    // curExtraX/curExtraY layer an additional independent pull on top of
+    // whatever the orbit rotation alone gives that axis (X on desktop, Y on
+    // mobile -- see extraXRange/extraYRange above)
     modelMatrix[12] = PIVOT[0] + col2[0] * ORBIT_RADIUS + curExtraX;
-    modelMatrix[13] = PIVOT[1] + col2[1] * ORBIT_RADIUS;
+    modelMatrix[13] = PIVOT[1] + col2[1] * ORBIT_RADIUS + curExtraY;
     modelMatrix[14] = PIVOT[2] + col2[2] * ORBIT_RADIUS;
 
     const aspect = canvas.width / canvas.height;
