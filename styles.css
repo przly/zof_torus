@@ -17,6 +17,9 @@ html, body {
   height: 100vh;
   overflow: hidden;
   background: var(--bg-blue);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #torus-canvas {
