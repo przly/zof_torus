@@ -486,14 +486,28 @@
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
   let targetX = 0, targetY = 0, curX = 0, curY = 0, velX = 0, velY = 0;
 
-  function onPointerMove(e) {
-    if (reducedMotion) return;
-    const nx = (e.clientX / window.innerWidth) - 0.5;
-    const ny = (e.clientY / window.innerHeight) - 0.5;
+  function setTargetFromPoint(clientX, clientY) {
+    const nx = (clientX / window.innerWidth) - 0.5;
+    const ny = (clientY / window.innerHeight) - 0.5;
     targetX = nx * MAX_OFFSET * 2;
     targetY = -ny * MAX_OFFSET * 2;
   }
+
+  function onPointerMove(e) {
+    if (reducedMotion) return;
+    setTargetFromPoint(e.clientX, e.clientY);
+  }
   window.addEventListener('pointermove', onPointerMove, { passive: true });
+
+  // touch devices don't hover, so pointermove alone never fires from a tap --
+  // pointerdown covers the tap-to-move interaction on mobile (harmless/
+  // redundant alongside pointermove on desktop, since a mouse click also
+  // fires pointerdown at the same position pointermove already tracked)
+  function onPointerDown(e) {
+    if (reducedMotion) return;
+    setTargetFromPoint(e.clientX, e.clientY);
+  }
+  window.addEventListener('pointerdown', onPointerDown, { passive: true });
 
   // ---------- resize ----------
 
@@ -509,14 +523,10 @@
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     objectScale = BASE_SCALE * (rect.width < 700 ? 0.6 : 1);
 
-    // mobile skips the blur/grain post-process pipeline entirely (renders
-    // straight to the screen below), so there's no need to allocate these
-    if (!IS_MOBILE) {
-      destroyFBO(fboScene);
-      destroyFBO(fboBlur);
-      fboScene = createFBO(canvas.width, canvas.height, true);
-      fboBlur = createFBO(canvas.width, canvas.height, false);
-    }
+    destroyFBO(fboScene);
+    destroyFBO(fboBlur);
+    fboScene = createFBO(canvas.width, canvas.height, true);
+    fboBlur = createFBO(canvas.width, canvas.height, false);
   }
   window.addEventListener('resize', resize, { passive: true });
   resize();
@@ -544,11 +554,9 @@
     const projMatrix = perspective(Math.PI / 5.5, aspect, 0.1, 10);
     const elapsed = reducedMotion ? 0 : (performance.now() - startTime) / 1000;
 
-    // pass 1: render torus scene. Mobile skips post-processing entirely, so
-    // it draws straight to the screen instead of an offscreen texture --
-    // saves both extra full-resolution passes, not just their visual effect
-    gl.bindFramebuffer(gl.FRAMEBUFFER, IS_MOBILE ? null : fboScene.framebuffer);
-    gl.viewport(0, 0, IS_MOBILE ? canvas.width : fboScene.width, IS_MOBILE ? canvas.height : fboScene.height);
+    // pass 1: render torus scene into an offscreen texture
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fboScene.framebuffer);
+    gl.viewport(0, 0, fboScene.width, fboScene.height);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(sceneProgram);
 
@@ -566,11 +574,6 @@
     gl.uniform1f(uSceneTime, elapsed);
 
     gl.drawElements(gl.TRIANGLES, geo.indices.length, gl.UNSIGNED_SHORT, 0);
-
-    if (IS_MOBILE) {
-      rafId = requestAnimationFrame(render);
-      return;
-    }
 
     // pass 2 + 3: separable blur (horizontal then vertical), grain added on the final pass
     gl.disable(gl.DEPTH_TEST);
@@ -594,7 +597,7 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.bindTexture(gl.TEXTURE_2D, fboBlur.texture);
     gl.uniform2f(uDirection, 0, 1);
-    gl.uniform1f(uGrainAmount, GRAIN_AMOUNT);
+    gl.uniform1f(uGrainAmount, IS_MOBILE ? 0 : GRAIN_AMOUNT);
     gl.uniform1f(uGrainScale, GRAIN_SCALE);
     gl.uniform1f(uPostTime, elapsed);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
