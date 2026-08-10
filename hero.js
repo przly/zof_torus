@@ -483,18 +483,39 @@
     reducedMotion = e.matches;
   });
 
-  // ---------- cursor parallax ----------
+  // ---------- cursor parallax: pendulum around a fixed pivot ----------
 
-  const MAX_OFFSET = 0.16; // world units
+  // the pivot sits ORBIT_RADIUS world units behind the torus's resting spot
+  // (further from the camera, since the camera looks from +Z toward the
+  // origin). the torus is "parented" to it at a fixed local offset of the
+  // same length, so it always stays exactly ORBIT_RADIUS away from the
+  // pivot -- rotating the pivot swings the torus along that fixed-radius
+  // arc (and spins the torus itself along with it) instead of translating it
+  const ORBIT_RADIUS = 2;
+  const PIVOT = [0, 0, -ORBIT_RADIUS];
+
+  const MAX_YAW = 0.24; // radians, left/right swing limit (cursor X)
+  const MAX_PITCH = 0.3; // radians, up/down swing limit (cursor Y)
   const SPRING_STIFFNESS = 0.002; // how strongly it's pulled toward the cursor
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
-  let targetX = 0, targetY = 0, curX = 0, curY = 0, velX = 0, velY = 0;
+  let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0, velYaw = 0, velPitch = 0;
+
+  // extra, purely horizontal pull layered on top of the orbit swing -- Y
+  // stays exactly tied to the pivot rotation, but X can be pulled further
+  // right (or left) than the arc alone would carry it. Scales with viewport
+  // width (recalculated in resize()) so it's proportionally smaller on
+  // narrow screens instead of a fixed world-unit amount everywhere
+  const EXTRA_X_RANGE_BASE = 0.5; // world units, at EXTRA_X_REFERENCE_WIDTH
+  const EXTRA_X_REFERENCE_WIDTH = 1440; // px -- the width EXTRA_X_RANGE_BASE was tuned at
+  let extraXRange = EXTRA_X_RANGE_BASE;
+  let targetExtraX = 0, curExtraX = 0, velExtraX = 0;
 
   function setTargetFromPoint(clientX, clientY) {
     const nx = (clientX / window.innerWidth) - 0.5;
     const ny = (clientY / window.innerHeight) - 0.5;
-    targetX = nx * MAX_OFFSET * 2;
-    targetY = -ny * MAX_OFFSET * 2;
+    targetYaw = nx * MAX_YAW * 2;
+    targetPitch = ny * MAX_PITCH * 2;
+    targetExtraX = nx * extraXRange * 2;
   }
 
   function onPointerMove(e) {
@@ -529,6 +550,7 @@
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     objectScale = BASE_SCALE * (rect.width < 700 ? 0.6 : 1);
+    extraXRange = EXTRA_X_RANGE_BASE * (rect.width / EXTRA_X_REFERENCE_WIDTH);
 
     destroyFBO(fboScene);
     destroyFBO(fboBlur);
@@ -544,18 +566,37 @@
   let rafId = null;
 
   function render() {
-    velX = (velX + (targetX - curX) * SPRING_STIFFNESS) * SPRING_DAMPING;
-    velY = (velY + (targetY - curY) * SPRING_STIFFNESS) * SPRING_DAMPING;
-    curX += velX;
-    curY += velY;
+    velYaw = (velYaw + (targetYaw - curYaw) * SPRING_STIFFNESS) * SPRING_DAMPING;
+    velPitch = (velPitch + (targetPitch - curPitch) * SPRING_STIFFNESS) * SPRING_DAMPING;
+    velExtraX = (velExtraX + (targetExtraX - curExtraX) * SPRING_STIFFNESS) * SPRING_DAMPING;
+    curYaw += velYaw;
+    curPitch += velPitch;
+    curExtraX += velExtraX;
+
+    // rotate the pivot by (curYaw, curPitch) and place the torus at the
+    // fixed-radius local offset (0, 0, ORBIT_RADIUS) that rotation carries
+    // it to -- both the swing position and the torus's own tilt come from
+    // the same rotation, since it's rigidly parented to the pivot
+    const cy = Math.cos(curYaw), sy = Math.sin(curYaw);
+    const cx = Math.cos(curPitch), sx = Math.sin(curPitch);
+
+    // combined rotation R = RotationY(yaw) * RotationX(pitch), as columns
+    const col0 = [cy, 0, -sy];
+    const col1 = [sy * sx, cx, cy * sx];
+    const col2 = [sy * cx, -sx, cy * cx];
 
     modelMatrix.fill(0);
-    modelMatrix[0] = objectScale;
-    modelMatrix[5] = objectScale;
-    modelMatrix[10] = objectScale;
+    modelMatrix[0] = col0[0] * objectScale; modelMatrix[1] = col0[1] * objectScale; modelMatrix[2] = col0[2] * objectScale;
+    modelMatrix[4] = col1[0] * objectScale; modelMatrix[5] = col1[1] * objectScale; modelMatrix[6] = col1[2] * objectScale;
+    modelMatrix[8] = col2[0] * objectScale; modelMatrix[9] = col2[1] * objectScale; modelMatrix[10] = col2[2] * objectScale;
     modelMatrix[15] = 1;
-    modelMatrix[12] = curX;
-    modelMatrix[13] = curY;
+
+    // world position = pivot + R * (0, 0, ORBIT_RADIUS) = pivot + col2 * ORBIT_RADIUS.
+    // curExtraX is added on top of X only -- Y stays exactly what the orbit
+    // rotation gives it, X gets an additional independent pull
+    modelMatrix[12] = PIVOT[0] + col2[0] * ORBIT_RADIUS + curExtraX;
+    modelMatrix[13] = PIVOT[1] + col2[1] * ORBIT_RADIUS;
+    modelMatrix[14] = PIVOT[2] + col2[2] * ORBIT_RADIUS;
 
     const aspect = canvas.width / canvas.height;
     const projMatrix = perspective(Math.PI / 5.5, aspect, 0.1, 10);
