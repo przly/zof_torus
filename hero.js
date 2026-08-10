@@ -14,9 +14,30 @@
   // dropped entirely on these regardless of core count
   const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
 
-  const gl = canvas.getContext('webgl', { antialias: !LOW_POWER, alpha: false })
-    || canvas.getContext('experimental-webgl', { antialias: !LOW_POWER, alpha: false });
+  // hints the browser/OS to pick the battery-friendly GPU on dual-GPU
+  // laptops for the same device tier that already gets the cheaper blur/grain
+  const CONTEXT_ATTRS = { antialias: !LOW_POWER, alpha: false, powerPreference: LOW_POWER ? 'low-power' : 'default' };
+  const gl = canvas.getContext('webgl', CONTEXT_ATTRS) || canvas.getContext('experimental-webgl', CONTEXT_ATTRS);
   if (!gl) return;
+
+  // WebGL contexts can be lost for reasons outside this page's control (GPU
+  // driver reset, the OS reclaiming contexts under memory pressure, too many
+  // contexts open across tabs). Without handling this, every gl.* call below
+  // silently becomes a no-op after loss -- the canvas just freezes/goes
+  // blank with no recovery. preventDefault() signals we'll rebuild instead
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    stop();
+  }, false);
+
+  canvas.addEventListener('webglcontextrestored', () => {
+    // every GL object tied to the old context (programs, buffers, FBOs) is
+    // now invalid -- rebuild from scratch, then let resize() recreate the
+    // FBOs at the current canvas size before resuming
+    if (!createGLResources()) return;
+    resize();
+    updateRunState();
+  }, false);
 
   const BG_COLOR = [0.1725, 0.2941, 0.9490]; // #2c4bf2, matches --bg-blue
   const BLUR_SPREAD = 6.0; // texel multiplier per blur pass
@@ -326,10 +347,6 @@
     return prog;
   }
 
-  const sceneProgram = createProgram(SCENE_VERT_SRC, SCENE_FRAG_SRC);
-  const postProgram = createProgram(POST_VERT_SRC, POST_FRAG_SRC);
-  if (!sceneProgram || !postProgram) return;
-
   // ---------- torus geometry ----------
 
   function createTorus(R, r, segsU, segsV) {
@@ -363,37 +380,54 @@
     };
   }
 
-  const geo = LOW_POWER ? createTorus(0.68, 0.24, 40, 20) : createTorus(0.68, 0.24, 64, 32);
+  // ---------- GL resources (programs, buffers, locations) ----------
 
-  const posBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, geo.positions, gl.STATIC_DRAW);
+  // pulled into its own function, rather than inline top-level consts, so
+  // webglcontextrestored (above) can rebuild everything from scratch --
+  // every one of these is invalidated when the context is lost
+  let sceneProgram, postProgram, geo, posBuffer, idxBuffer;
+  let aPosition, uModel, uView, uProjection, uSceneTime;
+  let quadBuffer, aPos, uScene, uTexel, uDirection, uSpread, uGrainAmount, uGrainScale, uPostTime;
 
-  const idxBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuffer);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geo.indices, gl.STATIC_DRAW);
+  function createGLResources() {
+    sceneProgram = createProgram(SCENE_VERT_SRC, SCENE_FRAG_SRC);
+    postProgram = createProgram(POST_VERT_SRC, POST_FRAG_SRC);
+    if (!sceneProgram || !postProgram) return false;
 
-  const aPosition = gl.getAttribLocation(sceneProgram, 'aPosition');
+    geo = LOW_POWER ? createTorus(0.68, 0.24, 40, 20) : createTorus(0.68, 0.24, 64, 32);
 
-  const uModel = gl.getUniformLocation(sceneProgram, 'uModel');
-  const uView = gl.getUniformLocation(sceneProgram, 'uView');
-  const uProjection = gl.getUniformLocation(sceneProgram, 'uProjection');
-  const uSceneTime = gl.getUniformLocation(sceneProgram, 'uTime');
+    posBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, geo.positions, gl.STATIC_DRAW);
 
-  // ---------- fullscreen quad ----------
+    idxBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geo.indices, gl.STATIC_DRAW);
 
-  const quadBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    aPosition = gl.getAttribLocation(sceneProgram, 'aPosition');
 
-  const aPos = gl.getAttribLocation(postProgram, 'aPos');
-  const uScene = gl.getUniformLocation(postProgram, 'uScene');
-  const uTexel = gl.getUniformLocation(postProgram, 'uTexel');
-  const uDirection = gl.getUniformLocation(postProgram, 'uDirection');
-  const uSpread = gl.getUniformLocation(postProgram, 'uSpread');
-  const uGrainAmount = gl.getUniformLocation(postProgram, 'uGrainAmount');
-  const uGrainScale = gl.getUniformLocation(postProgram, 'uGrainScale');
-  const uPostTime = gl.getUniformLocation(postProgram, 'uTime');
+    uModel = gl.getUniformLocation(sceneProgram, 'uModel');
+    uView = gl.getUniformLocation(sceneProgram, 'uView');
+    uProjection = gl.getUniformLocation(sceneProgram, 'uProjection');
+    uSceneTime = gl.getUniformLocation(sceneProgram, 'uTime');
+
+    quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+    aPos = gl.getAttribLocation(postProgram, 'aPos');
+    uScene = gl.getUniformLocation(postProgram, 'uScene');
+    uTexel = gl.getUniformLocation(postProgram, 'uTexel');
+    uDirection = gl.getUniformLocation(postProgram, 'uDirection');
+    uSpread = gl.getUniformLocation(postProgram, 'uSpread');
+    uGrainAmount = gl.getUniformLocation(postProgram, 'uGrainAmount');
+    uGrainScale = gl.getUniformLocation(postProgram, 'uGrainScale');
+    uPostTime = gl.getUniformLocation(postProgram, 'uTime');
+
+    return true;
+  }
+
+  if (!createGLResources()) return;
 
   // ---------- offscreen framebuffers (scene render + blur ping-pong) ----------
 
@@ -491,7 +525,7 @@
   // same length, so it always stays exactly ORBIT_RADIUS away from the
   // pivot -- rotating the pivot swings the torus along that fixed-radius
   // arc (and spins the torus itself along with it) instead of translating it
-  const ORBIT_RADIUS = IS_MOBILE ? 0.1 : 0.1;
+  const ORBIT_RADIUS = 0.1;
   const PIVOT = [0, 0, -ORBIT_RADIUS];
 
   const MAX_YAW = IS_MOBILE ? 0.9 : 0.9; // radians, left/right swing limit (cursor X)
@@ -500,9 +534,13 @@
   const SPRING_DAMPING = 0.9; // higher = less friction = more momentum/float
   let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0, velYaw = 0, velPitch = 0;
 
+  // measured against the canvas's own box (cached in resize(), below) rather
+  // than window.innerWidth/innerHeight -- keeps this correct if the hero
+  // ever isn't the full viewport (e.g. embedded lower on a longer page)
   function setTargetFromPoint(clientX, clientY) {
-    const nx = (clientX / window.innerWidth) - 0.5;
-    const ny = (clientY / window.innerHeight) - 0.5;
+    if (!canvasRect.width || !canvasRect.height) return;
+    const nx = ((clientX - canvasRect.left) / canvasRect.width) - 0.5;
+    const ny = ((clientY - canvasRect.top) / canvasRect.height) - 0.5;
     targetYaw = nx * MAX_YAW * 2;
     targetPitch = ny * MAX_PITCH * 2;
   }
@@ -527,6 +565,7 @@
 
   const BASE_SCALE = 0.62;
   let objectScale = BASE_SCALE;
+  let canvasRect = canvas.getBoundingClientRect();
 
   function resize() {
     // capping the backing-store resolution is the single biggest lever here:
@@ -536,6 +575,7 @@
     // rendering, which reads as blocky/soft regardless of blur quality
     const dpr = Math.min(window.devicePixelRatio || 1, (LOW_POWER && !IS_MOBILE) ? 1 : 2);
     const rect = canvas.getBoundingClientRect();
+    canvasRect = rect;
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     objectScale = BASE_SCALE * (rect.width < 700 ? 0.6 : 1);
@@ -662,9 +702,27 @@
     }
   }
 
+  // rendering only needs to run when the tab is visible AND the hero is
+  // actually scrolled into view -- without the latter, a hero embedded
+  // partway down a longer page (as the README's integration steps allow
+  // for) would keep rendering every frame indefinitely after the user
+  // scrolls past it
+  let pageVisible = !document.hidden;
+  let heroVisible = true; // assumed true until the observer's first callback lands, matching the common case of a hero at the top of the page
+
+  function updateRunState() {
+    if (pageVisible && heroVisible) start(); else stop();
+  }
+
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stop(); else start();
+    pageVisible = !document.hidden;
+    updateRunState();
   });
 
-  start();
+  new IntersectionObserver((entries) => {
+    heroVisible = entries[entries.length - 1].isIntersecting;
+    updateRunState();
+  }).observe(canvas);
+
+  updateRunState();
 })();
