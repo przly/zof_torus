@@ -2,8 +2,16 @@
   const canvas = document.getElementById('torus-canvas');
   if (!canvas) return;
 
-  const gl = canvas.getContext('webgl', { antialias: true, alpha: false })
-    || canvas.getContext('experimental-webgl', { antialias: true, alpha: false });
+  // Cheap, one-time device-tier heuristic: few CPU cores or a coarse
+  // (touch) pointer usually means a weaker GPU too. Everything below that
+  // reads LOW_POWER trims fill-rate/ALU cost (the blur + grain passes are
+  // far more expensive than the torus geometry itself, since they touch
+  // every pixel of the canvas rather than just the ~60% the torus covers).
+  const LOW_POWER = (navigator.hardwareConcurrency || 4) <= 4
+    || window.matchMedia('(pointer: coarse)').matches;
+
+  const gl = canvas.getContext('webgl', { antialias: !LOW_POWER, alpha: false })
+    || canvas.getContext('experimental-webgl', { antialias: !LOW_POWER, alpha: false });
   if (!gl) return;
 
   const BG_COLOR = [0.1725, 0.2941, 0.9490]; // #2c4bf2, matches --bg-blue
@@ -155,7 +163,8 @@
     }
   `;
 
-  const POST_FRAG_SRC = `
+  // Shared preamble (uniforms + hash/noise helpers) for both quality tiers.
+  const POST_FRAG_PREAMBLE = `
     precision highp float;
 
     varying vec2 vUv;
@@ -189,7 +198,13 @@
       vec2 u = f * f * (3.0 - 2.0 * f);
       return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
     }
+  `;
 
+  // Full quality: 9-tap blur, rotated + dual-octave grain (avoids moire,
+  // richer detail). This is the more expensive of the two variants since
+  // it runs across the entire canvas resolution, twice per frame (once per
+  // blur direction).
+  const POST_FRAG_SRC_HIGH = POST_FRAG_PREAMBLE + `
     vec2 rotate(vec2 p, float a) {
       float s = sin(a);
       float c = cos(a);
@@ -237,6 +252,40 @@
       gl_FragColor = vec4(color, 1.0);
     }
   `;
+
+  // Low power: 5-tap blur (10 total texture reads/frame instead of 18) and
+  // a single, unrotated noise octave for grain (skips 4 extra hash() calls
+  // and the sin/cos rotation per pixel). Visually close to the high-quality
+  // version at typical GRAIN_AMOUNT/BLUR_SPREAD values, at roughly half the
+  // per-pixel cost -- the right trade on weaker GPUs since these two passes
+  // touch every pixel of the canvas, unlike the torus draw itself.
+  const POST_FRAG_SRC_LOW = POST_FRAG_PREAMBLE + `
+    void main() {
+      float w0 = 0.375;
+      float w1 = 0.25;
+      float w2 = 0.0625;
+
+      vec2 step = uTexel * uDirection * uSpread;
+      vec3 color = texture2D(uScene, vUv).rgb * w0;
+      color += texture2D(uScene, vUv + step * 1.0).rgb * w1;
+      color += texture2D(uScene, vUv - step * 1.0).rgb * w1;
+      color += texture2D(uScene, vUv + step * 2.0).rgb * w2;
+      color += texture2D(uScene, vUv - step * 2.0).rgb * w2;
+
+      float t = mod(uTime, 1000.0);
+      vec2 timeJump = vec2(hash(vec2(t, 1.0)), hash(vec2(3.0, t))) * 500.0;
+      float grain = valueNoise(gl_FragCoord.xy / uGrainScale + timeJump) - 0.5;
+
+      float luma = dot(color, vec3(0.299, 0.587, 0.114));
+      float midtoneFalloff = clamp(1.0 - abs(luma - 0.5) * 1.6, 0.0, 1.0);
+
+      color += grain * uGrainAmount * midtoneFalloff * 2.2;
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  const POST_FRAG_SRC = LOW_POWER ? POST_FRAG_SRC_LOW : POST_FRAG_SRC_HIGH;
 
   function compileShader(type, src) {
     const shader = gl.createShader(type);
@@ -303,7 +352,7 @@
     };
   }
 
-  const geo = createTorus(0.68, 0.32, 64, 32);
+  const geo = LOW_POWER ? createTorus(0.68, 0.32, 40, 20) : createTorus(0.68, 0.32, 64, 32);
 
   const posBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
@@ -445,7 +494,9 @@
   let objectScale = BASE_SCALE;
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // capping the backing-store resolution is the single biggest lever here:
+    // the blur/grain passes cost scales directly with total pixel count
+    const dpr = Math.min(window.devicePixelRatio || 1, LOW_POWER ? 1 : 2);
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
