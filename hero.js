@@ -491,7 +491,7 @@
   // same length, so it always stays exactly ORBIT_RADIUS away from the
   // pivot -- rotating the pivot swings the torus along that fixed-radius
   // arc (and spins the torus itself along with it) instead of translating it
-  const ORBIT_RADIUS = IS_MOBILE ? 0.4 : 0.1;
+  const ORBIT_RADIUS = IS_MOBILE ? 0.1 : 0.1;
   const PIVOT = [0, 0, -ORBIT_RADIUS];
 
   const MAX_YAW = IS_MOBILE ? 0.9 : 0.9; // radians, left/right swing limit (cursor X)
