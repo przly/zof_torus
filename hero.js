@@ -545,8 +545,15 @@
     fboScene = createFBO(canvas.width, canvas.height, true);
     fboBlur = createFBO(canvas.width, canvas.height, false);
   }
-  window.addEventListener('resize', resize, { passive: true });
-  resize();
+  // ResizeObserver rather than a single synchronous getBoundingClientRect
+  // read at load -- on some mobile Safari loads the canvas's rect briefly
+  // reports 0 width before the real layout has settled, which reads as a
+  // near-zero aspect ratio and squashes the torus into a thin vertical
+  // sliver until the next resize event corrects it. ResizeObserver's
+  // callback only fires once the browser has an actual settled box size,
+  // both initially and on every subsequent layout change, so it can't
+  // observe that transient zero
+  new ResizeObserver(resize).observe(canvas);
 
   // ---------- render loop ----------
 
@@ -554,6 +561,14 @@
   let rafId = null;
 
   function render() {
+    // guards against the render loop's first frame racing ahead of the
+    // ResizeObserver's initial callback (which is what sizes these) on some
+    // mobile browsers -- rendering with a stale/null FBO would throw
+    if (!fboScene || !fboBlur) {
+      rafId = requestAnimationFrame(render);
+      return;
+    }
+
     velYaw = (velYaw + (targetYaw - curYaw) * SPRING_STIFFNESS) * SPRING_DAMPING;
     velPitch = (velPitch + (targetPitch - curPitch) * SPRING_STIFFNESS) * SPRING_DAMPING;
     curYaw += velYaw;
